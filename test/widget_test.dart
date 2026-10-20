@@ -5,12 +5,17 @@ import 'package:naviun/app.dart';
 import 'package:naviun/data/repositories/local_json_route_repository.dart';
 import 'package:naviun/data/repositories/route_repository.dart';
 import 'package:naviun/services/location_service.dart';
+import 'package:naviun/services/inertial_sensor_service.dart';
 import 'package:naviun/services/settings_service.dart';
 import 'package:naviun/services/tts_service.dart';
 
 void main() {
-  testWidgets('NaviunApp arranca correctamente en pantalla de Inicio', (tester) async {
-    SharedPreferences.setMockInitialValues({'settings_has_seen_onboarding': true});
+  testWidgets('NaviunApp arranca correctamente en pantalla de Inicio', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'settings_has_seen_onboarding': true,
+    });
     final prefs = await SharedPreferences.getInstance();
     final settingsService = SettingsService(prefs);
 
@@ -18,7 +23,12 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider<SettingsService>.value(value: settingsService),
-          ChangeNotifierProvider<LocationService>.value(value: LocationService()),
+          ChangeNotifierProvider<LocationService>.value(
+            value: LocationService(),
+          ),
+          ChangeNotifierProvider<InertialSensorService>.value(
+            value: InertialSensorService(),
+          ),
           ChangeNotifierProvider<TtsService>.value(value: TtsService()),
           Provider<RouteRepository>.value(value: LocalJsonRouteRepository()),
         ],

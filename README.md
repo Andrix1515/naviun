@@ -163,13 +163,24 @@ El proyecto cuenta con 20 pruebas automáticas en `test/`:
 - **Sin backend**: La persistencia es local e individual por archivo JSON (`path_provider`), detrás de la abstracción `RouteRepository`, permitiendo migrar fácilmente a SQLite (`sqflite`) en futuras fases.
 - **Exportación**: Uso de `share_plus` para compartir directamente el archivo o texto JSON de la ruta con otros dispositivos.
 - **Ruta de prueba**: Se incluye en Inicio y en Ajustes la opción "Crear ruta de prueba", la cual genera una ruta marcada como "DATOS DE PRUEBA" sin coordenadas GPS para permitir la demostración y verificación de los flujos de voz y avance táctil en interiores sin necesidad de salir al campus.
-- **Sensores no incluidos**: Conforme a las especificaciones del MVP, no se implementó fusión de sensores ni detección por visión artificial. En Ajustes se muestra el estado del GPS y para el resto la leyenda *"No incluido en esta versión"*.
+- **IMU experimental para demostración**: El acelerómetro y el giroscopio del teléfono alimentan un estimador básico de pasos, distancia recorrida aproximada y rotación relativa. Se activa desde Ajustes, está apagado por defecto y permite calibrar la longitud de paso recorriendo una distancia conocida. No calcula ubicación, no reconoce obstáculos y nunca confirma la llegada a un punto. La incertidumbre y las limitaciones se muestran durante la navegación. Ver [docs/DEMO_IMU.md](./docs/DEMO_IMU.md).
+- **Otros sensores no incluidos**: Barómetro, balizas BLE/NFC y visión artificial continúan fuera del alcance de esta demo.
 
 ---
 
+## ♿ Novedades de accesibilidad, voz y háptica
+
+- `HapticService` centraliza patrones diferenciados para giro, llegada, advertencia, confirmación y pérdida de confiabilidad.
+- `IntentParser` normaliza comandos en español y reconoce destinos, pausas, reanudación, ayuda y confirmaciones.
+- `VoiceCommandService` prepara el flujo de reconocimiento por voz con lenguaje `es_PE`, pausa corta y mensajes de recuperación para los errores más probables.
+- Los ajustes incluyen dos modos de anuncio: voz propia de Naviun o lector de pantalla, compactando la experiencia sin solapar TTS y TalkBack.
+- La auditoría de accesibilidad queda documentada en `docs/AUDITORIA.md`; los guiones de demo y la guía WCAG están en `docs/DEMO_TALKBACK.md` y `docs/WCAG.md`.
+- Los patrones hápticos se documentan en `docs/haptica.md` con guía de prueba en dos teléfonos distintos.
+- Los valores de calibración para GPS, proximidad y vibración son provisionales y deben validarse con pruebas reales en campus y en dispositivos de usuarios.
+
 ## 🔮 Integración Futura de Sensores y Mejoras
 
-1. **Fusión de Sensores (IMU)**: Integrar acelerómetro y giroscopio (`sensors_plus`) con filtros de Kalman o complementarios para dead reckoning peatonal en pasillos techados donde la señal GPS se pierde.
+1. **Evaluación y mejora del IMU**: Recopilar grabaciones reales etiquetadas, calibrar filtros en varios teléfonos y, solo si las métricas lo justifican, añadir progreso por tramo y fusión con GPS.
 2. **Balizas BLE y NFC**: Detección de proximidad en interiores (laboratorios, aulas) mediante balizas Bluetooth o tags NFC en marcos de puertas.
 3. **Backend y Sincronización**: Repositorio centralizado en campus UNCP para validación colaborativa de rutas por parte del personal de orientación y bienestar universitario.
 4. **Dictado por voz**: Integración de `speech_to_text` en el asistente de creación para redactar instrucciones por dictado.

@@ -1,16 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../core/constants.dart';
+import '../../../core/inertial_constants.dart';
 import '../../../core/strings.dart';
 import '../../../core/utils/date_utils.dart';
 import '../../../core/utils/geo_utils.dart';
 import '../../../data/models/route_model.dart';
+import '../../../services/haptic_service.dart';
+import '../../../services/inertial_sensor_service.dart';
 import '../../../services/location_service.dart';
 import '../../../services/settings_service.dart';
 import '../../../services/tts_service.dart';
@@ -30,7 +32,7 @@ class NavigationScreen extends StatefulWidget {
   State<NavigationScreen> createState() => _NavigationScreenState();
 }
 
-class _NavigationScreenState extends State<NavigationScreen> {
+class _NavigationScreenState extends State<NavigationScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _isPaused = false;
   bool _isCompleted = false;
@@ -38,19 +40,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
   // Seguimiento de aviso de proximidad emitido por punto
   final Set<int> _announcedProximityIndices = {};
   bool _hasAnnouncedGpsUnreliable = false;
+  int _lastAnnouncedTurnCount = 0;
 
   StreamSubscription<Position>? _positionSubscription;
   Position? _latestPosition;
+  InertialSensorService? _inertialService;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Mantener la pantalla encendida durante la navegación activa
     WakelockPlus.enable();
 
     // Iniciar rastreo de GPS y locución inicial
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startGpsTracking();
+      _startInertialTracking();
       _announceCurrentWaypoint(isInitial: true);
     });
   }
@@ -59,8 +65,68 @@ class _NavigationScreenState extends State<NavigationScreen> {
   void dispose() {
     // Desactivar bloqueo de pantalla y suscripción de GPS
     WakelockPlus.disable();
+    WidgetsBinding.instance.removeObserver(this);
     _positionSubscription?.cancel();
+    _inertialService?.removeListener(_onInertialUpdate);
+    final inertial = _inertialService;
+    if (inertial != null) {
+      unawaited(inertial.stopTracking());
+    }
     super.dispose();
+  }
+
+  void _startInertialTracking({bool reset = true}) {
+    final settings = context.read<SettingsService>();
+    if (!settings.inertialDemoEnabled) {
+      return;
+    }
+    final inertial = context.read<InertialSensorService>();
+    if (!identical(_inertialService, inertial)) {
+      _inertialService?.removeListener(_onInertialUpdate);
+      _inertialService = inertial;
+      inertial.addListener(_onInertialUpdate);
+    }
+    _lastAnnouncedTurnCount = inertial.turnEvents;
+    unawaited(
+      inertial.startTracking(
+        stepLengthMeters: settings.calibratedStepLengthMeters ??
+            InertialConstants.defaultStepLengthMeters,
+        calibrated: settings.calibratedStepLengthMeters != null,
+        reset: reset,
+      ),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final settings = context.read<SettingsService>();
+    if (state == AppLifecycleState.resumed &&
+        settings.inertialDemoEnabled &&
+        !_isPaused &&
+        !_isCompleted) {
+      _startInertialTracking(reset: false);
+    } else if (state != AppLifecycleState.resumed) {
+      unawaited(_inertialService?.stopTracking());
+    }
+  }
+
+  void _onInertialUpdate() {
+    final inertial = _inertialService;
+    if (!mounted || inertial == null || inertial.turnEvents <= _lastAnnouncedTurnCount) {
+      return;
+    }
+    _lastAnnouncedTurnCount = inertial.turnEvents;
+    final settings = context.read<SettingsService>();
+    context.read<HapticService>().trigger(
+          HapticPattern.h,
+          enabled: settings.vibrationEnabled,
+          intensity: settings.hapticIntensity,
+        );
+    _speakText(
+      'El giroscopio percibió una rotación aproximada de '
+      '${inertial.lastTurnDegrees.abs().round()} grados del teléfono. '
+      'Es una estimación relativa; verifica tu orientación y sigue la instrucción.',
+    );
   }
 
   void _startGpsTracking() {
@@ -95,6 +161,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       if (!_hasAnnouncedGpsUnreliable && accuracy > 35.0) {
         _hasAnnouncedGpsUnreliable = true;
         _speakText(AppStrings.speechGpsUnreliable);
+        context.read<HapticService>().trigger(HapticPattern.f, enabled: settings.vibrationEnabled);
       }
       return;
     } else {
@@ -117,7 +184,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _speakText(msg);
 
       if (settings.vibrationEnabled) {
-        HapticFeedback.mediumImpact();
+        context.read<HapticService>().trigger(HapticPattern.e, enabled: true);
       }
     }
   }
@@ -208,7 +275,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     final settings = context.read<SettingsService>();
     if (settings.vibrationEnabled) {
-      HapticFeedback.heavyImpact();
+      context.read<HapticService>().trigger(HapticPattern.g, enabled: true);
     }
 
     final nextIndex = _currentIndex + 1;
@@ -217,11 +284,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
       setState(() {
         _isCompleted = true;
       });
+      unawaited(_inertialService?.stopTracking());
+      context.read<HapticService>().trigger(HapticPattern.d, enabled: settings.vibrationEnabled);
       _speakText(AppStrings.speechRouteFinished);
     } else {
       setState(() {
         _currentIndex = nextIndex;
       });
+      context.read<HapticService>().trigger(HapticPattern.a, enabled: settings.vibrationEnabled);
       _announceCurrentWaypoint();
     }
   }
@@ -238,8 +308,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     });
 
     if (_isPaused) {
+      unawaited(_inertialService?.stopTracking());
       _speakText(AppStrings.navigationPausedTitle);
     } else {
+      _startInertialTracking(reset: false);
       _speakText('Reanudando navegación.');
       _announceCurrentWaypoint();
     }
@@ -335,6 +407,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   @override
   Widget build(BuildContext context) {
     final location = context.watch<LocationService>();
+    final settings = context.watch<SettingsService>();
+    final inertial = context.watch<InertialSensorService>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     if (_isCompleted) {
@@ -408,6 +482,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                         distanceMeters: distanceMeters,
                         currentGpsAccuracy: _latestPosition?.accuracy,
                       ),
+                      if (settings.inertialDemoEnabled) ...[
+                        const SizedBox(height: 12),
+                        _buildInertialEstimate(inertial, isDark),
+                      ],
                       const SizedBox(height: 12),
 
                       // Advertencias activas en este tramo
@@ -478,6 +556,82 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 minHeight: 52,
                 semanticHint: 'Pausa la navegación y ofrece asistencia de seguridad o llamada de ayuda',
                 onPressed: _needHelp,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInertialEstimate(InertialSensorService inertial, bool isDark) {
+    final textColor = isDark ? Colors.white : AppConstants.textPrimaryLight;
+    final status = inertial.sensorError != null
+        ? inertial.sensorError!
+        : inertial.isAvailable
+            ? 'Sensores activos · datos reales'
+            : 'Esperando datos de los sensores';
+
+    return Semantics(
+      container: true,
+      label: 'Estimación experimental por sensores. $status. '
+          '${inertial.isAvailable ? '${inertial.steps} pasos, distancia recorrida aproximadamente '
+              '${inertial.estimatedDistanceMeters.toStringAsFixed(1)} metros, '
+              'incertidumbre aproximada más o menos '
+              '${inertial.distanceUncertaintyMeters.toStringAsFixed(1)} metros.' : ''}',
+      child: Card(
+        color: isDark ? const Color(0xFF172554) : const Color(0xFFEFF6FF),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.sensors, color: isDark ? Colors.lightBlueAccent : Colors.blue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Estimación IMU · experimental',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(status, style: TextStyle(color: textColor)),
+              if (inertial.isAvailable) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${inertial.steps} pasos · recorrido aproximado '
+                  '${inertial.estimatedDistanceMeters.toStringAsFixed(1)} m '
+                  '± ${inertial.distanceUncertaintyMeters.toStringAsFixed(1)} m',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Rotaciones relativas detectadas: ${inertial.turnEvents}. '
+                  '${inertial.isCalibrated ? 'Longitud de paso calibrada.' : 'Longitud de paso provisional; calibra en Ajustes.'}',
+                  style: TextStyle(color: textColor),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                'Estimación del movimiento del teléfono, no de tu ubicación. '
+                'No confirma llegada ni reemplaza las instrucciones, el GPS o la guía humana.',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),

@@ -46,6 +46,9 @@ dependencies:
   url_launcher: ^6.3.3
   uuid: ^4.6.0
   intl: ^0.20.3
+  vibration: ^3.2.1
+  speech_to_text: ^7.1.0
+  sensors_plus: ^7.1.1
 
 dev_dependencies:
   flutter_test:
